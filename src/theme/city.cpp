@@ -47,6 +47,7 @@ class CityTheme final : public Theme {
   public:
     std::string_view name() const override { return "city"; }
     Color background() const override { return {150, 152, 155, 255}; }
+    SignStyle signStyle() const override { return {{35, 38, 45, 255}, {90, 95, 105, 255}, {255, 225, 140, 255}}; }
 
     void drawGround(Rectangle visible, Rectangle, float) const override {
         // Paving slabs: a grid aligned to world coordinates so it doesn't swim when panning.
@@ -245,7 +246,7 @@ class CityTheme final : public Theme {
 
         e.info.halfWidth = t.width / 2.0f + 4.0f;
         e.info.height = t.bodyHeight() + (t.roofKind == 0 ? 50.0f : 75.0f);
-        e.info.labelHeight = t.bodyHeight() - 14.0f;
+        e.info.labelHeight = 46.0f; // storefront sign just above the awning
 
         float side = unit(rng) < 0.5f ? -1.0f : 1.0f;
         const int props = std::uniform_int_distribution<int>{1, 3}(rng);

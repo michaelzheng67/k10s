@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace k10s {
 
@@ -19,15 +20,29 @@ std::string lower(std::string s) {
 
 bool pressed(int key) { return IsKeyPressed(key) || IsKeyPressedRepeat(key); }
 
+// Shortens `text` with a middle ellipsis until it fits in `maxWidth` pixels, keeping both
+// ends visible (context names tend to differ at the end, e.g. ...cluster/prod vs .../staging).
+std::string fitText(const std::string& text, int fontSize, int maxWidth) {
+    if (MeasureText(text.c_str(), fontSize) <= maxWidth) return text;
+    std::size_t keep = text.size();
+    while (keep > 4) {
+        --keep;
+        const std::size_t head = (keep + 1) / 2, tail = keep / 2;
+        std::string s = text.substr(0, head) + "..." + text.substr(text.size() - tail);
+        if (MeasureText(s.c_str(), fontSize) <= maxWidth) return s;
+    }
+    return "...";
+}
+
 bool contains(const std::vector<std::string>& v, const std::string& s) {
     return std::find(v.begin(), v.end(), s) != v.end();
 }
 
 } // namespace
 
-void CommandUi::flash(std::string msg) {
+void CommandUi::flash(std::string msg, float seconds) {
     message_ = std::move(msg);
-    messageTimer_ = 3.0f;
+    messageTimer_ = seconds;
 }
 
 const std::vector<std::string>& CommandUi::items(const Choices& c) const {
@@ -50,6 +65,7 @@ void CommandUi::openPicker(PickerKind kind) {
     mode_ = Mode::Picker;
     picker_ = kind;
     selected_ = 0;
+    scroll_ = 0;
     justOpened_ = true;
 }
 
@@ -127,6 +143,7 @@ CommandUi::Action CommandUi::update(const Choices& choices, float dt) {
         if (!typed.empty()) {
             text_ += typed;
             selected_ = 0;
+            scroll_ = 0;
         }
 
         const auto& list = items(choices);
@@ -137,9 +154,23 @@ CommandUi::Action CommandUi::update(const Choices& choices, float dt) {
             for (std::size_t i = 0; i < shown.size(); ++i)
                 if (list[shown[i]] == current(choices)) selected_ = i;
         }
-        if (pressed(KEY_DOWN)) selected_ = (selected_ + 1) % shown.size();
-        if (pressed(KEY_UP)) selected_ = (selected_ + shown.size() - 1) % shown.size();
-        selected_ = std::min(selected_, shown.size() - 1);
+        const std::size_t n = shown.size();
+        if (pressed(KEY_DOWN)) selected_ = (selected_ + 1) % n;
+        if (pressed(KEY_UP)) selected_ = (selected_ + n - 1) % n;
+        if (pressed(KEY_PAGE_DOWN)) selected_ = std::min(n - 1, selected_ + kVisibleRows);
+        if (pressed(KEY_PAGE_UP)) selected_ = selected_ > kVisibleRows ? selected_ - kVisibleRows : 0;
+        if (IsKeyPressed(KEY_HOME)) selected_ = 0;
+        if (IsKeyPressed(KEY_END)) selected_ = n - 1;
+        if (const float wheel = GetMouseWheelMove(); wheel != 0.0f) { // wheel moves the selection
+            const auto steps = static_cast<std::size_t>(std::abs(wheel) + 0.5f);
+            selected_ = wheel < 0.0f ? std::min(n - 1, selected_ + steps) : (selected_ > steps ? selected_ - steps : 0);
+        }
+        selected_ = std::min(selected_, n - 1);
+
+        // Keep the selection inside the visible window.
+        if (selected_ < scroll_) scroll_ = selected_;
+        if (selected_ >= scroll_ + kVisibleRows) scroll_ = selected_ + 1 - kVisibleRows;
+        scroll_ = std::min(scroll_, n > kVisibleRows ? n - kVisibleRows : 0);
 
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) {
             const std::string pick = list[shown[selected_]];
@@ -179,29 +210,54 @@ void CommandUi::draw(const Choices& choices, int screenW, int screenH) const {
 
     const auto& list = items(choices);
     const auto shown = filtered(list);
-    constexpr int rowH = 28, panelW = 420;
-    const int rows = std::max<int>(1, static_cast<int>(shown.size()));
-    const int panelH = 70 + rows * rowH;
+    constexpr int rowH = 28, fontSize = 18;
+
+    // Wide enough for the longest name (plus the "(current)" tag), within the screen.
+    int longest = 0;
+    for (const std::size_t i : shown) longest = std::max(longest, MeasureText(list[i].c_str(), fontSize));
+    const int panelW = std::clamp(longest + 150, 420, screenW - 80);
+    const int nameMaxW = panelW - 140;
+
+    const std::size_t first = std::min(scroll_, shown.size());
+    const std::size_t count = std::min(kVisibleRows, shown.size() - first);
+    const int rows = std::max<int>(1, static_cast<int>(count));
+    const int panelH = 78 + rows * rowH;
     const int px = (screenW - panelW) / 2, py = (screenH - panelH) / 2;
 
     DrawRectangle(0, 0, screenW, screenH, Color{0, 0, 0, 90});
     DrawRectangleRounded({static_cast<float>(px), static_cast<float>(py), static_cast<float>(panelW),
                           static_cast<float>(panelH)},
-                         0.06f, 8, kPanel);
+                         0.04f, 8, kPanel);
     DrawText(picker_ == PickerKind::Context ? "Contexts" : "Themes", px + 16, py + 12, 20, kAccent);
     DrawText(text_.empty() ? "type to filter" : text_.c_str(), px + 130, py + 15, 16,
              text_.empty() ? kDim : RAYWHITE);
+    if (!shown.empty()) {
+        const char* pos = TextFormat("%zu/%zu", selected_ + 1, shown.size());
+        DrawText(pos, px + panelW - MeasureText(pos, 14) - 16, py + 16, 14, kDim);
+    }
 
     if (shown.empty()) {
-        DrawText("no matches", px + 16, py + 50, 18, kDim);
+        DrawText("no matches", px + 16, py + 50, fontSize, kDim);
         return;
     }
-    for (std::size_t i = 0; i < shown.size(); ++i) {
-        const int y = py + 48 + static_cast<int>(i) * rowH;
+    for (std::size_t row = 0; row < count; ++row) {
+        const std::size_t i = first + row;
+        const int y = py + 48 + static_cast<int>(row) * rowH;
         const std::string& name = list[shown[i]];
         if (i == selected_) DrawRectangle(px + 8, y - 2, panelW - 16, rowH - 2, Color{255, 170, 60, 60});
-        DrawText(name.c_str(), px + 20, y + 3, 18, RAYWHITE);
+        DrawText(fitText(name, fontSize, nameMaxW).c_str(), px + 20, y + 3, fontSize, RAYWHITE);
         if (name == current(choices)) DrawText("(current)", px + panelW - 100, y + 5, 14, kDim);
+    }
+
+    // Scroll hints + a thin scrollbar when the list is longer than the window.
+    if (shown.size() > kVisibleRows) {
+        const int listTop = py + 46, listH = static_cast<int>(kVisibleRows) * rowH;
+        if (first > 0) DrawText("^ more", px + 20, py + panelH - 24, 14, kDim);
+        if (first + count < shown.size()) DrawText("v more", px + 90, py + panelH - 24, 14, kDim);
+        const float frac = static_cast<float>(kVisibleRows) / static_cast<float>(shown.size());
+        const float offset = static_cast<float>(first) / static_cast<float>(shown.size());
+        DrawRectangle(px + panelW - 8, listTop + static_cast<int>(offset * static_cast<float>(listH)), 4,
+                      std::max(12, static_cast<int>(frac * static_cast<float>(listH))), Color{255, 170, 60, 160});
     }
 }
 

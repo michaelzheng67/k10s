@@ -35,6 +35,13 @@ struct BuildingInfo {
     std::vector<Prop> props;
 };
 
+// How a building's name sign looks.
+struct SignStyle {
+    Color board{90, 60, 35, 255};
+    Color border{60, 40, 22, 255};
+    Color text{245, 235, 210, 255};
+};
+
 // A visual theme: decides how ground, buildings, props and scenery look. Everything else
 // (layout, villagers, fire, camera) is theme-agnostic.
 class Theme {
@@ -62,6 +69,8 @@ class Theme {
     virtual const BuildingInfo& building(const std::string& uid) const = 0;
     virtual void drawBuilding(Vector2 base, const std::string& uid, bool ready, float time) const = 0;
     virtual void drawProp(Vector2 at, const Prop& prop, float time) const = 0;
+
+    virtual SignStyle signStyle() const { return {}; }
 };
 
 // --- registry ---------------------------------------------------------------
@@ -72,5 +81,10 @@ std::unique_ptr<Theme> makeTheme(std::string_view name); // nullptr if unknown
 Color darken(Color c, float f);
 Color withAlpha(Color c, unsigned char a);
 void drawSmoke(Vector2 top, bool heavy, float time, float phase);
+
+// A small name sign centred at `centre` (world space), shortened to fit `maxWidth`.
+// Text is skipped when it would be unreadably small on screen (`zoom` = camera zoom).
+void drawSign(Vector2 centre, const std::string& text, const SignStyle& style, float maxWidth,
+              float zoom);
 
 } // namespace k10s

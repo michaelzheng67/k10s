@@ -54,7 +54,10 @@ namespace {
 void drawHud(const std::string& context, std::size_t nodes, std::size_t pods, long burning) {
     DrawRectangle(0, 0, kWidth, 34, Color{20, 25, 30, 210});
     DrawText("k10s", 12, 7, 20, RAYWHITE);
-    DrawText(TextFormat("context: %s", context.c_str()), 80, 9, 18, Color{170, 180, 190, 255});
+    std::string label = "context: " + context;
+    while (label.size() > 12 && MeasureText(label.c_str(), 18) > kWidth / 2) // leave room for stats
+        label = label.substr(0, label.size() - 4) + "...";
+    DrawText(label.c_str(), 80, 9, 18, Color{170, 180, 190, 255});
     const char* stats = TextFormat("nodes %zu   pods %zu", nodes, pods);
     const char* fire = TextFormat("on fire %ld", burning);
     const int fireW = MeasureText(fire, 18);
@@ -67,18 +70,6 @@ void drawHud(const std::string& context, std::size_t nodes, std::size_t pods, lo
 bool contains(Rectangle outer, Rectangle inner) {
     return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width &&
            inner.y + inner.height <= outer.y + outer.height;
-}
-
-// A name sign centred at `centre`.
-void drawLabel(const std::string& text, Vector2 centre) {
-    constexpr int fontSize = 16;
-    const int w = MeasureText(text.c_str(), fontSize);
-    const int x = static_cast<int>(centre.x) - w / 2;
-    const int y = static_cast<int>(centre.y) - fontSize / 2;
-    DrawRectangleRounded({static_cast<float>(x - 6), static_cast<float>(y - 2),
-                          static_cast<float>(w + 12), static_cast<float>(fontSize + 4)},
-                         0.4f, 4, Color{30, 30, 30, 150});
-    DrawText(text.c_str(), x, y, fontSize, RAYWHITE);
 }
 
 // Built-in simulated clusters, so k10s works (and demos) with no real cluster.
@@ -106,15 +97,45 @@ std::unique_ptr<k10s::DataSource> makeSource(const std::string& context,
 }
 
 // k10s [--context NAME]   (like k9s; defaults to the kubeconfig's current-context)
-std::string pickStartContext(int argc, char** argv, const k10s::Kubeconfig& kubeconfig) {
+struct StartChoice {
+    std::string context;
+    std::string note; // why we didn't use current-context, shown to the user
+};
+
+// --context flag > K10S_CONTEXT > kubeconfig current-context > first real context > demo.
+StartChoice pickStartContext(int argc, char** argv, const k10s::Kubeconfig& kubeconfig) {
     for (int i = 1; i + 1 < argc; ++i)
         if (std::string_view{argv[i]} == "--context")
-            return argv[i + 1];
+            return {argv[i + 1], {}};
     if (const char* env = std::getenv("K10S_CONTEXT"))
-        return env;
-    if (kubeconfig.find(kubeconfig.currentContext))
-        return kubeconfig.currentContext;
-    return kFakeContexts[0].name;
+        return {env, {}};
+    const std::string& cur = kubeconfig.currentContext;
+    if (kubeconfig.find(cur))
+        return {cur, {}};
+    if (!kubeconfig.contexts.empty()) {
+        const std::string& first = kubeconfig.contexts.front().name;
+        return {first, cur.empty() ? "kubeconfig has no current-context; using " + first
+                                   : "current-context '" + cur + "' not found; using " + first};
+    }
+    if (!kubeconfig.warnings.empty())
+        return {kFakeContexts[0].name, "couldn't load kubeconfig (" + kubeconfig.warnings.front() +
+                                           "); showing a demo cluster"};
+    return {kFakeContexts[0].name, "no contexts in kubeconfig; showing a demo cluster"};
+}
+
+// `k10s --contexts`: what k10s sees in your kubeconfig, for troubleshooting.
+int printContexts() {
+    const k10s::Kubeconfig cfg = k10s::loadKubeconfig();
+    std::printf("kubeconfig: %s\n", std::getenv("KUBECONFIG") ? std::getenv("KUBECONFIG") : "~/.kube/config");
+    std::printf("current-context: %s\n", cfg.currentContext.empty() ? "(none)" : cfg.currentContext.c_str());
+    if (cfg.contexts.empty())
+        std::printf("no contexts found\n");
+    for (const auto& c : cfg.contexts)
+        std::printf("  %s %-40s %s\n", c.name == cfg.currentContext ? "*" : " ", c.name.c_str(),
+                    c.server.c_str());
+    for (const auto& w : cfg.warnings)
+        std::printf("warning: %s\n", w.c_str());
+    return 0;
 }
 
 } // namespace
@@ -142,8 +163,11 @@ int main(int argc, char** argv) {
             std::printf("k10s %s\n", K10S_VERSION);
             return 0;
         }
+        if (arg == "--contexts")
+            return printContexts();
         if (arg == "--help" || arg == "-h") {
             std::printf("usage: k10s [--context NAME] [--theme village|city|beach] [--verbose]\n"
+                        "       k10s --contexts   list kubeconfig contexts\n"
                         "in-app: drag/scroll to pan/zoom, f to fit, :ctx, :theme, :q\n");
             return 0;
         }
@@ -160,16 +184,22 @@ int main(int argc, char** argv) {
     for (const auto& c : kubeconfig.contexts)
         contexts.push_back(c.name);
 
-    std::string currentContext = pickStartContext(argc, argv, kubeconfig);
+    for (const auto& warning : kubeconfig.warnings)
+        std::fprintf(stderr, "k10s: kubeconfig: %s\n", warning.c_str());
+
+    auto [currentContext, startNote] = pickStartContext(argc, argv, kubeconfig);
     auto startSource = makeSource(currentContext, kubeconfig);
     if (!startSource) {
-        std::fprintf(stderr, "k10s: unknown context '%s', using %s\n", currentContext.c_str(),
-                     kFakeContexts[0].name);
+        startNote = "unknown context '" + currentContext + "'; showing a demo cluster";
         currentContext = kFakeContexts[0].name;
         startSource = makeSource(currentContext, kubeconfig);
     }
     auto session = std::make_unique<k10s::Session>(std::move(startSource));
     k10s::CommandUi ui;
+    if (!startNote.empty()) {
+        std::fprintf(stderr, "k10s: %s\n", startNote.c_str());
+        ui.flash(startNote, 10.0f);
+    }
     k10s::ClusterState state;
 
     k10s::UserConfig userConfig = k10s::loadUserConfig();
@@ -194,12 +224,17 @@ int main(int argc, char** argv) {
 
     // Dev hook: K10S_SCREENSHOT=out.png saves a frame after ~3s and exits.
     const char* screenshotPath = std::getenv("K10S_SCREENSHOT");
+    const char* startCommand = std::getenv("K10S_COMMAND"); // dev hook, e.g. "ctx"
     int frame = 0;
 
     while (!WindowShouldClose()) {
         // --- input ----------------------------------------------------------
         const k10s::CommandUi::Choices choices{contexts, currentContext, k10s::themeNames(), currentTheme};
-        const auto action = ui.update(choices, GetFrameTime());
+        auto action = ui.update(choices, GetFrameTime());
+        if (startCommand && frame == 0) {
+            action = ui.run(startCommand, choices);
+            startCommand = nullptr;
+        }
         if (action.kind == k10s::CommandUi::ActionKind::Quit)
             break;
         if (action.kind == k10s::CommandUi::ActionKind::SwitchContext) {
@@ -297,9 +332,14 @@ int main(int argc, char** argv) {
 
         for (const auto& d : scene) {
             switch (d.kind) {
-            case Kind::Building:
-                theme->drawBuilding(houses[d.idx].base, houses[d.idx].uid, houses[d.idx].ready, now);
+            case Kind::Building: {
+                const auto& h = houses[d.idx];
+                const auto& info = theme->building(h.uid);
+                theme->drawBuilding(h.base, h.uid, h.ready, now);
+                k10s::drawSign({h.base.x, h.base.y - info.labelHeight}, h.name, theme->signStyle(),
+                               info.halfWidth * 1.5f, camera.camera().zoom);
                 break;
+            }
             case Kind::Prop: {
                 const auto& h = houses[d.idx];
                 const auto& p = theme->building(h.uid).props[d.sub];
@@ -313,12 +353,6 @@ int main(int argc, char** argv) {
             }
         }
         EndMode2D();
-
-        // Name signs in screen space so they stay readable when zoomed out.
-        for (const auto& h : houses) {
-            const Vector2 sign{h.base.x, h.base.y - theme->building(h.uid).labelHeight};
-            drawLabel(h.name, GetWorldToScreen2D(sign, camera.camera()));
-        }
 
         drawHud(currentContext, state.nodeCount(), villagers.size(),
                 std::count(villagers.onFire.begin(), villagers.onFire.end(), 1));

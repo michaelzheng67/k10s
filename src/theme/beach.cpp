@@ -48,6 +48,7 @@ class BeachTheme final : public Theme {
   public:
     std::string_view name() const override { return "beach"; }
     Color background() const override { return {238, 214, 160, 255}; }
+    SignStyle signStyle() const override { return {{245, 238, 220, 255}, {150, 105, 65, 255}, {40, 110, 160, 255}}; }
 
     Rectangle frame(Rectangle v) const override {
         constexpr float ocean = 220.0f; // keep a band of sea in view above the huts

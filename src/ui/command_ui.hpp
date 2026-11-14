@@ -35,11 +35,20 @@ class CommandUi {
     Action update(const Choices& choices, float dt);
     void draw(const Choices& choices, int screenW, int screenH) const;
 
+    // Runs a command as if typed after ':' (e.g. "ctx"). Used for dev screenshots.
+    Action run(const std::string& command, const Choices& choices) {
+        text_ = command;
+        return runCommand(choices);
+    }
+
     // True while the command bar or picker is open (they own the keyboard).
     bool capturingInput() const { return mode_ != Mode::Idle; }
 
     // Shows a short message in the command bar area (e.g. "unknown context").
-    void flash(std::string msg);
+    void flash(std::string msg, float seconds = 3.0f);
+
+    // Rows shown at once in a picker; longer lists scroll.
+    static constexpr std::size_t kVisibleRows = 12;
 
   private:
     enum class Mode { Idle, Command, Picker };
@@ -55,6 +64,7 @@ class CommandUi {
     PickerKind picker_{PickerKind::Context};
     std::string text_;        // command text, or picker filter
     std::size_t selected_{0}; // index into filtered list
+    std::size_t scroll_{0};   // first visible row of the filtered list
     bool justOpened_{false};
     std::string message_;
     float messageTimer_{0.0f};

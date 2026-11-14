@@ -44,4 +44,45 @@ void drawSmoke(Vector2 top, bool heavy, float t, float phase) {
     }
 }
 
+namespace {
+
+// raylib's default font is a 10px pixel font: crisp at 10/20/30px, garbled when scaled to
+// anything else. Signs are drawn at arbitrary zoom, so use a mipmapped, smoothly filtered
+// copy of its glyph atlas (created lazily, once the GL context exists).
+const Font& signFont() {
+    static const Font font = [] {
+        Font f = GetFontDefault();
+        Image atlas = LoadImageFromTexture(f.texture);
+        f.texture = LoadTextureFromImage(atlas);
+        UnloadImage(atlas);
+        GenTextureMipmaps(&f.texture);
+        SetTextureFilter(f.texture, TEXTURE_FILTER_TRILINEAR);
+        return f;
+    }();
+    return font;
+}
+
+} // namespace
+
+void drawSign(Vector2 centre, const std::string& text, const SignStyle& style, float maxWidth,
+              float zoom) {
+    constexpr float fontSize = 12.0f, spacing = 1.0f, padX = 4.0f, padY = 2.5f;
+    const Font& font = signFont();
+
+    // Middle-ellipsis until it fits: names usually differ at the end (...-prod vs ...-dev).
+    std::string label = text;
+    auto width = [&](const std::string& s) { return MeasureTextEx(font, s.c_str(), fontSize, spacing).x; };
+    for (std::size_t keep = text.size(); width(label) > maxWidth - 2.0f * padX && keep > 4;) {
+        --keep;
+        label = text.substr(0, (keep + 1) / 2) + ".." + text.substr(text.size() - keep / 2);
+    }
+
+    const float w = width(label) + 2.0f * padX, h = fontSize + 2.0f * padY;
+    const Rectangle r{centre.x - w / 2.0f, centre.y - h / 2.0f, w, h};
+    DrawRectangleRounded(r, 0.3f, 4, style.board);
+    DrawRectangleRoundedLinesEx(r, 0.3f, 4, 1.0f, style.border);
+    if (fontSize * zoom >= 6.0f) // too small to read when zoomed far out
+        DrawTextEx(font, label.c_str(), {r.x + padX, r.y + padY}, fontSize, spacing, style.text);
+}
+
 } // namespace k10s
