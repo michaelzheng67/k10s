@@ -23,6 +23,8 @@ class ClusterState {
         auto it = _nodes.find(uid);
         return it == _nodes.end() ? nullptr : &it->second;
     }
+    const std::unordered_map<Uid, Pod>& pods() const { return _pods; }
+    const std::unordered_map<Uid, Node>& nodes() const { return _nodes; }
     std::size_t podCount() const { return _pods.size(); }
     std::size_t nodeCount() const { return _nodes.size(); }
 };

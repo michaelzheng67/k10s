@@ -43,7 +43,9 @@ endfunction()
 # ---------------------------------------------------------------------------
 add_library(k10s_core STATIC
   src/model/cluster_state.cpp
-  src/sim/fake_cluster.cpp)
+  src/sim/fake_cluster.cpp
+  src/render/person.cpp
+  src/render/appearance.cpp)
 target_include_directories(k10s_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(k10s_core PUBLIC raylib)
 k10s_configure_target(k10s_core)
@@ -70,7 +72,8 @@ if(K10S_BUILD_TESTS)
   add_executable(k10s_tests
     tests/smoke_test.cpp
     tests/cluster_state_test.cpp
-    tests/fake_cluster_test.cpp)
+    tests/fake_cluster_test.cpp
+    tests/appearance_test.cpp)
   target_link_libraries(k10s_tests PRIVATE k10s_core Catch2::Catch2WithMain)
   k10s_configure_target(k10s_tests)
 
