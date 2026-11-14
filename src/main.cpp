@@ -1,12 +1,14 @@
 #include "kube/kubeconfig.hpp"
 #include "model/cluster_state.hpp"
-#include "render/house.hpp"
+#include "render/camera.hpp"
 #include "render/person.hpp"
-#include "render/scenery.hpp"
 #include "source/fake_source.hpp"
 #include "source/kube_source.hpp"
 #include "source/session.hpp"
+#include "theme/theme.hpp"
 #include "ui/command_ui.hpp"
+#include "util/config.hpp"
+#include "world/layout.hpp"
 #include "world/movement.hpp"
 #include "world/villagers.hpp"
 #include <algorithm>
@@ -28,7 +30,6 @@
 constexpr int kWidth{1280};
 constexpr int kHeight{720};
 constexpr const char* const kTitle{"k10s"};
-constexpr Color grass{106, 168, 79, 255};
 class Window {
 
   public:
@@ -50,13 +51,6 @@ class Window {
 
 namespace {
 
-struct PlacedHouse {
-    std::string name;
-    Vector2 base; // bottom-centre
-    k10s::HouseStyle style;
-    bool ready;
-};
-
 void drawHud(const std::string& context, std::size_t nodes, std::size_t pods, long burning) {
     DrawRectangle(0, 0, kWidth, 34, Color{20, 25, 30, 210});
     DrawText("k10s", 12, 7, 20, RAYWHITE);
@@ -68,6 +62,11 @@ void drawHud(const std::string& context, std::size_t nodes, std::size_t pods, lo
     DrawText(stats, kWidth - fireW - statsW - 40, 9, 18, RAYWHITE);
     DrawText(fire, kWidth - fireW - 14, 9, 18,
              burning > 0 ? Color{255, 140, 40, 255} : Color{140, 200, 120, 255});
+}
+
+bool contains(Rectangle outer, Rectangle inner) {
+    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width &&
+           inner.y + inner.height <= outer.y + outer.height;
 }
 
 // A name sign centred at `centre`.
@@ -89,9 +88,10 @@ struct FakeContext {
     int nodes;
     int podsPerNode;
 };
-constexpr std::array<FakeContext, 2> kFakeContexts{{
+constexpr std::array<FakeContext, 3> kFakeContexts{{
     {"fake-village", 42, 6, 8},
     {"fake-hamlet", 7, 3, 5},
+    {"fake-town", 99, 14, 6},
 }};
 
 // Returns the data source for a context, or nullptr if it's unknown.
@@ -119,6 +119,18 @@ std::string pickStartContext(int argc, char** argv, const k10s::Kubeconfig& kube
 
 } // namespace
 
+// k10s [--theme NAME]; else K10S_THEME; else saved preference; else "village".
+std::string pickStartTheme(int argc, char** argv, const k10s::UserConfig& cfg) {
+    for (int i = 1; i + 1 < argc; ++i)
+        if (std::string_view{argv[i]} == "--theme")
+            return argv[i + 1];
+    if (const char* env = std::getenv("K10S_THEME"))
+        return env;
+    if (!cfg.theme.empty())
+        return cfg.theme;
+    return "village";
+}
+
 int main(int argc, char** argv) {
     Window w{kWidth, kHeight, kTitle};
     SetExitKey(KEY_NULL); // Esc closes menus (like k9s) instead of quitting; use :q
@@ -143,18 +155,25 @@ int main(int argc, char** argv) {
     k10s::CommandUi ui;
     k10s::ClusterState state;
 
+    k10s::UserConfig userConfig = k10s::loadUserConfig();
+    std::string currentTheme = pickStartTheme(argc, argv, userConfig);
+    auto theme = k10s::makeTheme(currentTheme);
+    if (!theme) {
+        std::fprintf(stderr, "k10s: unknown theme '%s', using village\n", currentTheme.c_str());
+        currentTheme = "village";
+        theme = k10s::makeTheme(currentTheme);
+    }
+
     k10s::Villagers villagers;
     std::mt19937 moveRng{1234};
     bool stateChanged = true;
 
-    // Layout constants.
-    constexpr int cols = 3;
-    constexpr float firstX = 240.0f, spacingX = 400.0f;
-    constexpr float firstBaseY = 300.0f, spacingY = 310.0f;
-    constexpr float yardDepth = 68.0f; // how far in front of the house villagers hang out
-    constexpr Rectangle bounds{10.0f, 50.0f, kWidth - 20.0f, kHeight - 60.0f};
+    k10s::VillageLayout layout;
+    k10s::CameraController camera{Rectangle{0.0f, 34.0f, static_cast<float>(kWidth), kHeight - 64.0f}};
 
-    const auto scenery = k10s::makeScenery(7, Rectangle{0, 34, kWidth, kHeight - 34});
+    // Meadow decorations cover whatever the camera can see; regenerated as the village grows.
+    Rectangle sceneryArea{};
+    std::vector<k10s::Decoration> scenery;
 
     // Dev hook: K10S_SCREENSHOT=out.png saves a frame after ~3s and exits.
     const char* screenshotPath = std::getenv("K10S_SCREENSHOT");
@@ -162,7 +181,8 @@ int main(int argc, char** argv) {
 
     while (!WindowShouldClose()) {
         // --- input ----------------------------------------------------------
-        const auto action = ui.update(contexts, currentContext, GetFrameTime());
+        const k10s::CommandUi::Choices choices{contexts, currentContext, k10s::themeNames(), currentTheme};
+        const auto action = ui.update(choices, GetFrameTime());
         if (action.kind == k10s::CommandUi::ActionKind::Quit)
             break;
         if (action.kind == k10s::CommandUi::ActionKind::SwitchContext) {
@@ -170,11 +190,28 @@ int main(int argc, char** argv) {
                 session.reset(); // stop + join the old thread before starting a new one
                 state = k10s::ClusterState{};
                 villagers = k10s::Villagers{};
+                layout.clear();
+                camera.fit(/*snap=*/true);
                 session = std::make_unique<k10s::Session>(std::move(source));
                 currentContext = action.arg;
                 stateChanged = true;
             } else {
                 ui.flash("unknown context: " + action.arg);
+            }
+        }
+        if (action.kind == k10s::CommandUi::ActionKind::SwitchTheme) {
+            if (auto next = k10s::makeTheme(action.arg)) {
+                theme = std::move(next);
+                currentTheme = action.arg;
+                // Building sizes differ per theme: re-lay out and re-home the villagers.
+                layout.clear();
+                villagers = k10s::Villagers{};
+                sceneryArea = {};
+                camera.fit(/*snap=*/true);
+                stateChanged = true;
+                userConfig.theme = currentTheme;
+                if (!k10s::saveUserConfig(userConfig))
+                    ui.flash("theme set, but couldn't save " + k10s::userConfigPath().string());
             }
         }
 
@@ -184,68 +221,92 @@ int main(int argc, char** argv) {
             stateChanged = true;
         }
 
-        // Lay nodes out on a grid: index -> (row, col) -> base position.
-        std::vector<PlacedHouse> houses;
-        std::unordered_map<std::string, Vector2> yardPos; // where each node's villagers live
-        int i = 0;
-        for (const auto& [uid, node] : state.nodes()) {
-            const Vector2 base{firstX + static_cast<float>(i % cols) * spacingX,
-                               firstBaseY + static_cast<float>(i / cols) * spacingY};
-            houses.push_back({node.name, base, k10s::houseStyleFor(uid), node.ready});
-            yardPos[node.name] = {base.x, base.y + yardDepth};
-            ++i;
-        }
-
         if (stateChanged) {
+            layout.update(state, *theme);
+            std::unordered_map<std::string, Vector2> yardPos; // where each node's villagers live
+            for (const auto& h : layout.houses())
+                yardPos[h.name] = h.yard();
             villagers.sync(state, yardPos);
             stateChanged = false;
         }
 
+        const Rectangle world = layout.bounds();           // where buildings and villagers are
+        const Rectangle framed = theme->frame(world);      // what the camera keeps in view
         const float dt = std::min(GetFrameTime(), 0.05f); // avoid huge jumps after a stall
-        k10s::updateVillagers(villagers, dt, moveRng, bounds);
+        camera.update(framed, dt, /*acceptInput=*/!ui.capturingInput() && !screenshotPath);
+
+        const Rectangle visible = camera.visibleWorld();
+        if (!contains(sceneryArea, visible)) {
+            sceneryArea = {visible.x - visible.width * 0.5f, visible.y - visible.height * 0.5f,
+                           visible.width * 2.0f, visible.height * 2.0f};
+            scenery = theme->makeScenery(7, sceneryArea);
+        }
+
+        k10s::updateVillagers(villagers, dt, moveRng, world);
 
         // --- draw -----------------------------------------------------------
         const float now = static_cast<float>(GetTime());
         BeginDrawing();
-        ClearBackground(grass);
+        ClearBackground(theme->background());
 
-        k10s::drawScenery(scenery);
-        for (const auto& [name, yard] : yardPos)
-            k10s::drawYard(yard);
+        BeginMode2D(camera.camera());
+        theme->drawGround(visible, world, now);
+        theme->drawScenery(scenery, world, now);
+        for (const auto& h : layout.houses())
+            theme->drawYard(h.yard());
 
-        // Painter's algorithm: draw houses and villagers together, back to front by
-        // their ground y, so villagers can walk behind houses.
+        // Painter's algorithm: draw buildings, props and villagers together, back to front by
+        // their ground y, so villagers can walk behind buildings and trees.
+        enum class Kind { Building, Prop, Villager };
         struct Drawable {
             float y;
-            bool isHouse;
+            Kind kind;
             std::size_t idx;
+            std::size_t sub; // which prop of the building
         };
+        const auto& houses = layout.houses();
         std::vector<Drawable> scene;
-        scene.reserve(houses.size() + villagers.size());
-        for (std::size_t h = 0; h < houses.size(); ++h)
-            scene.push_back({houses[h].base.y, true, h});
+        scene.reserve(houses.size() * 3 + villagers.size());
+        for (std::size_t h = 0; h < houses.size(); ++h) {
+            scene.push_back({houses[h].base.y, Kind::Building, h, 0});
+            const auto& props = theme->building(houses[h].uid).props;
+            for (std::size_t p = 0; p < props.size(); ++p)
+                scene.push_back({houses[h].base.y + props[p].dy, Kind::Prop, h, p});
+        }
         for (std::size_t v = 0; v < villagers.size(); ++v)
-            scene.push_back({villagers.pos[v].y, false, v});
+            scene.push_back({villagers.pos[v].y, Kind::Villager, v, 0});
         std::sort(scene.begin(), scene.end(),
                   [](const Drawable& a, const Drawable& b) { return a.y < b.y; });
 
         for (const auto& d : scene) {
-            if (d.isHouse) {
+            switch (d.kind) {
+            case Kind::Building:
+                theme->drawBuilding(houses[d.idx].base, houses[d.idx].uid, houses[d.idx].ready, now);
+                break;
+            case Kind::Prop: {
                 const auto& h = houses[d.idx];
-                k10s::drawHouse(h.base, h.style, h.ready, now);
-                // Name sign on the gable, so the crowd in the yard never covers it.
-                const float roofH = h.style.width * h.style.roofPitch;
-                drawLabel(h.name, {h.base.x, h.base.y - h.style.height - roofH * 0.38f});
-            } else {
+                const auto& p = theme->building(h.uid).props[d.sub];
+                theme->drawProp({h.base.x + p.dx, h.base.y + p.dy}, p, now);
+                break;
+            }
+            case Kind::Villager:
                 k10s::drawPerson(villagers.pos[d.idx], villagers.vel[d.idx], villagers.look[d.idx],
                                  villagers.onFire[d.idx] != 0, now);
+                break;
             }
+        }
+        EndMode2D();
+
+        // Name signs in screen space so they stay readable when zoomed out.
+        for (const auto& h : houses) {
+            const Vector2 sign{h.base.x, h.base.y - theme->building(h.uid).labelHeight};
+            drawLabel(h.name, GetWorldToScreen2D(sign, camera.camera()));
         }
 
         drawHud(currentContext, state.nodeCount(), villagers.size(),
                 std::count(villagers.onFire.begin(), villagers.onFire.end(), 1));
 
-        ui.draw(contexts, currentContext, kWidth, kHeight);
+        ui.draw(choices, kWidth, kHeight);
 
         if (screenshotPath && ++frame == 180) {
             rlDrawRenderBatchActive(); // flush pending draws before reading pixels

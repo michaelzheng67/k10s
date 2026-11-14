@@ -78,8 +78,15 @@ add_library(k10s_core STATIC
   src/render/appearance.cpp
   src/world/villagers.cpp
   src/world/movement.cpp
+  src/world/layout.cpp
   src/render/house.cpp
-  src/render/scenery.cpp)
+  src/render/scenery.cpp
+  src/render/camera.cpp
+  src/theme/theme.cpp
+  src/theme/village.cpp
+  src/theme/city.cpp
+  src/theme/beach.cpp
+  src/util/config.cpp)
 target_include_directories(k10s_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(k10s_core PUBLIC raylib yaml-cpp::yaml-cpp nlohmann_json::nlohmann_json CURL::libcurl)
 k10s_configure_target(k10s_core)
@@ -113,7 +120,10 @@ if(K10S_BUILD_TESTS)
     tests/spsc_stress_test.cpp
     tests/kubeconfig_test.cpp
     tests/session_test.cpp
-    tests/kube_parse_test.cpp)
+    tests/kube_parse_test.cpp
+    tests/layout_test.cpp
+    tests/camera_test.cpp
+    tests/config_test.cpp)
   target_link_libraries(k10s_tests PRIVATE k10s_core Catch2::Catch2WithMain)
   k10s_configure_target(k10s_tests)
 
