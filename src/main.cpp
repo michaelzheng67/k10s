@@ -3,15 +3,18 @@
 #include "render/person.hpp"
 #include "render/scenery.hpp"
 #include "sim/fake_cluster.hpp"
+#include "util/spsc_queue.hpp"
 #include "world/movement.hpp"
 #include "world/villagers.hpp"
-#include <raylib.h>
-#include <rlgl.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <random>
+#include <raylib.h>
+#include <rlgl.h>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -78,13 +81,26 @@ int main() {
     Window w{kWidth, kHeight, kTitle};
     k10s::FakeCluster sim{42, 6, 8};
     k10s::ClusterState state;
+    k10s::SpscQueue<k10s::Event, 4096> events;
     for (const auto& e : sim.snapshot())
-        state.apply(e);
+        events.try_push(e);
+
+    std::jthread sim_thread([&sim, &events](std::stop_token st) {
+        while (!st.stop_requested()) {
+            for (const auto& e : sim.tick()) {
+                while (!events.try_push(e) && !st.stop_requested()) {
+                    std::this_thread::yield();
+                }
+            }
+            for (int i = 0; i < 10 && !st.stop_requested(); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+    });
 
     k10s::Villagers villagers;
     std::mt19937 moveRng{1234};
     bool stateChanged = true;
-    double lastTick = GetTime();
 
     // Layout constants.
     constexpr int cols = 3;
@@ -100,11 +116,8 @@ int main() {
     int frame = 0;
 
     while (!WindowShouldClose()) {
-        // --- update ---------------------------------------------------------
-        if (GetTime() - lastTick >= 1.0) {
-            for (const auto& e : sim.tick())
-                state.apply(e);
-            lastTick = GetTime();
+        while (auto e = events.try_pop()) {
+            state.apply(*e);
             stateChanged = true;
         }
 
