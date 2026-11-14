@@ -12,6 +12,7 @@ struct Appearance {
     Color hair{60, 40, 25, 255};
     int hairStyle{0}; // 0 = short, 1 = long, 2 = bald
     float scale{1.0f};
+    float phase{0.0f}; // offsets animations so villagers don't move in lockstep
 };
 
 Appearance appearanceFor(const std::string& uid);

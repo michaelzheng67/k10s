@@ -1,6 +1,22 @@
 #include "world/villagers.hpp"
 
+#include <cmath>
+#include <numbers>
 #include <utility>
+
+#include "util/hash.hpp"
+
+namespace {
+
+// Each villager gets their own stable spot in the yard so they don't all crowd one point.
+Vector2 yardSpot(const std::string& uid, Vector2 yard) {
+    const std::uint64_t h = k10s::mix64(k10s::fnv1a(uid));
+    const float angle = static_cast<float>(h & 0xFFFF) / 65535.0f * 2.0f * std::numbers::pi_v<float>;
+    const float radius = 0.35f + 0.65f * static_cast<float>((h >> 16) & 0xFFFF) / 65535.0f;
+    return {yard.x + std::cos(angle) * radius * 80.0f, yard.y + std::sin(angle) * radius * 20.0f};
+}
+
+} // namespace
 
 namespace k10s {
 
@@ -57,7 +73,7 @@ void Villagers::sync(const ClusterState& state,
             auto house = housePos.find(pod.nodeName);
             if (house == housePos.end())
                 continue;
-            add(podUid, house->second, appearanceFor(podUid));
+            add(podUid, yardSpot(podUid, house->second), appearanceFor(podUid));
         }
         onFire[index.at(podUid)] = isHealthy(pod) ? 0 : 1;
     }

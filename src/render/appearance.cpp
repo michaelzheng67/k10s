@@ -3,18 +3,11 @@
 #include <array>
 #include <cstdint>
 #include <random>
-#include <string_view>
+#include <numbers>
+
+#include "util/hash.hpp"
 
 namespace {
-
-constexpr std::uint64_t fnv1a(std::string_view s) {
-    std::uint64_t hash = 14695981039346656037ULL;
-    for (char c : s) {
-        hash ^= static_cast<std::uint8_t>(c);
-        hash *= 1099511628211ULL;
-    }
-    return hash;
-}
 
 constexpr std::array<Color, 5> kSkins{{
     {255, 220, 185, 255},
@@ -58,6 +51,7 @@ Appearance appearanceFor(const std::string& uid) {
     a.pants = randomColor(rng);
     a.hairStyle = std::uniform_int_distribution<int>{0, 2}(rng);
     a.scale = std::uniform_real_distribution<float>{0.85f, 1.15f}(rng);
+    a.phase = std::uniform_real_distribution<float>{0.0f, 2.0f * std::numbers::pi_v<float>}(rng);
     return a;
 }
 

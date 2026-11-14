@@ -2,6 +2,8 @@
 
 #include "world/villagers.hpp"
 
+#include <cmath>
+
 using namespace k10s;
 
 namespace {
@@ -116,7 +118,9 @@ TEST_CASE("sync adds villagers for new pods at their yard") {
     Villagers v;
     v.sync(s, kYards);
     CHECK(v.size() == 2);
-    CHECK(v.home[v.index.at("b")].x == 300.0f);
+    const Vector2 hb = v.home[v.index.at("b")];
+    CHECK(std::abs(hb.x - 300.0f) <= 80.0f); // scattered within its yard
+    CHECK(std::abs(hb.y - 100.0f) <= 20.0f);
     requireConsistent(v);
 }
 

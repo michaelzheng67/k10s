@@ -41,3 +41,18 @@ TEST_CASE("different uids give varied looks") {
     }
     CHECK(shirts.size() > 40);
 }
+
+#include "util/hash.hpp"
+
+TEST_CASE("fnv1a matches known reference values") {
+    CHECK(fnv1a("") == 14695981039346656037ULL);
+    CHECK(fnv1a("a") == 0xaf63dc4c8601ec8cULL);
+}
+
+TEST_CASE("mix64 spreads low bits for near-identical strings") {
+    std::set<std::uint64_t> buckets;
+    for (int i = 40; i < 48; ++i) {
+        buckets.insert((mix64(fnv1a("pod-" + std::to_string(i))) & 0xFFFF) / 8192); // 8 buckets
+    }
+    CHECK(buckets.size() >= 4);
+}

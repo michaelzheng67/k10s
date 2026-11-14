@@ -1,11 +1,14 @@
 #include "model/cluster_state.hpp"
+#include "render/house.hpp"
 #include "render/person.hpp"
+#include "render/scenery.hpp"
 #include "sim/fake_cluster.hpp"
 #include "world/movement.hpp"
 #include "world/villagers.hpp"
 #include <raylib.h>
+#include <rlgl.h>
 #include <algorithm>
-#include <numeric>
+#include <cstdlib>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -16,24 +19,11 @@ constexpr int kWidth{1280};
 constexpr int kHeight{720};
 constexpr const char* const kTitle{"k10s"};
 constexpr Color grass{106, 168, 79, 255};
-constexpr Color wall{150, 100, 60, 255};
-constexpr Color roof{170, 60, 50, 255};
-
-void drawHouse(float x, float y, float w, float h) {
-    const float roofH = w * 0.5f;    // wider house -> taller roof
-    const float overhang = w * 0.1f; // roof sticks out past the walls
-
-    DrawRectangleV(Vector2{x, y}, Vector2{w, h}, wall);
-
-    // peak -> bottom-left -> bottom-right (counter-clockwise on screen)
-    DrawTriangle(Vector2{x + w / 2.0f, y - roofH}, Vector2{x - overhang, y},
-                 Vector2{x + w + overhang, y}, roof);
-}
-
 class Window {
 
   public:
     explicit Window(int w, int h, const char* title) {
+        SetConfigFlags(FLAG_MSAA_4X_HINT); // smooth (anti-aliased) shape edges
         InitWindow(w, h, title);
         if (!IsWindowReady())
             throw std::runtime_error("failed to open window");
@@ -47,6 +37,42 @@ class Window {
     Window(Window&&) = delete;
     Window& operator=(Window&&) = delete;
 };
+
+namespace {
+
+struct PlacedHouse {
+    std::string name;
+    Vector2 base; // bottom-centre
+    k10s::HouseStyle style;
+    bool ready;
+};
+
+void drawHud(std::size_t nodes, std::size_t pods, long burning) {
+    DrawRectangle(0, 0, kWidth, 34, Color{20, 25, 30, 210});
+    DrawText("k10s", 12, 7, 20, RAYWHITE);
+    DrawText("context: fake-cluster", 80, 9, 18, Color{170, 180, 190, 255});
+    const char* stats = TextFormat("nodes %zu   pods %zu", nodes, pods);
+    const char* fire = TextFormat("on fire %ld", burning);
+    const int fireW = MeasureText(fire, 18);
+    const int statsW = MeasureText(stats, 18);
+    DrawText(stats, kWidth - fireW - statsW - 40, 9, 18, RAYWHITE);
+    DrawText(fire, kWidth - fireW - 14, 9, 18,
+             burning > 0 ? Color{255, 140, 40, 255} : Color{140, 200, 120, 255});
+}
+
+// A name sign centred at `centre`.
+void drawLabel(const std::string& text, Vector2 centre) {
+    constexpr int fontSize = 16;
+    const int w = MeasureText(text.c_str(), fontSize);
+    const int x = static_cast<int>(centre.x) - w / 2;
+    const int y = static_cast<int>(centre.y) - fontSize / 2;
+    DrawRectangleRounded({static_cast<float>(x - 6), static_cast<float>(y - 2),
+                          static_cast<float>(w + 12), static_cast<float>(fontSize + 4)},
+                         0.4f, 4, Color{30, 30, 30, 150});
+    DrawText(text.c_str(), x, y, fontSize, RAYWHITE);
+}
+
+} // namespace
 
 int main() {
     Window w{kWidth, kHeight, kTitle};
@@ -62,11 +88,16 @@ int main() {
 
     // Layout constants.
     constexpr int cols = 3;
-    constexpr float marginX = 140.0f, marginY = 180.0f;
-    constexpr float spacingX = 400.0f, spacingY = 320.0f;
-    constexpr float houseW = 200.0f, houseH = 140.0f;
-    constexpr float yardDepth = 70.0f; // how far in front of the house villagers hang out
-    constexpr Rectangle bounds{10.0f, 40.0f, kWidth - 20.0f, kHeight - 50.0f};
+    constexpr float firstX = 240.0f, spacingX = 400.0f;
+    constexpr float firstBaseY = 300.0f, spacingY = 310.0f;
+    constexpr float yardDepth = 68.0f; // how far in front of the house villagers hang out
+    constexpr Rectangle bounds{10.0f, 50.0f, kWidth - 20.0f, kHeight - 60.0f};
+
+    const auto scenery = k10s::makeScenery(7, Rectangle{0, 34, kWidth, kHeight - 34});
+
+    // Dev hook: K10S_SCREENSHOT=out.png saves a frame after ~3s and exits.
+    const char* screenshotPath = std::getenv("K10S_SCREENSHOT");
+    int frame = 0;
 
     while (!WindowShouldClose()) {
         // --- update ---------------------------------------------------------
@@ -77,15 +108,15 @@ int main() {
             stateChanged = true;
         }
 
-        // Lay nodes out on a grid: index -> (row, col) -> screen position.
-        std::unordered_map<std::string, Vector2> housePos; // top-left of each house
-        std::unordered_map<std::string, Vector2> yardPos;  // where its villagers live
+        // Lay nodes out on a grid: index -> (row, col) -> base position.
+        std::vector<PlacedHouse> houses;
+        std::unordered_map<std::string, Vector2> yardPos; // where each node's villagers live
         int i = 0;
         for (const auto& [uid, node] : state.nodes()) {
-            const float x = marginX + static_cast<float>(i % cols) * spacingX;
-            const float y = marginY + static_cast<float>(i / cols) * spacingY;
-            housePos[node.name] = {x, y};
-            yardPos[node.name] = {x + houseW / 2.0f, y + houseH + yardDepth};
+            const Vector2 base{firstX + static_cast<float>(i % cols) * spacingX,
+                               firstBaseY + static_cast<float>(i / cols) * spacingY};
+            houses.push_back({node.name, base, k10s::houseStyleFor(uid), node.ready});
+            yardPos[node.name] = {base.x, base.y + yardDepth};
             ++i;
         }
 
@@ -98,30 +129,53 @@ int main() {
         k10s::updateVillagers(villagers, dt, moveRng, bounds);
 
         // --- draw -----------------------------------------------------------
+        const float now = static_cast<float>(GetTime());
         BeginDrawing();
         ClearBackground(grass);
 
-        for (const auto& [name, pos] : housePos) {
-            drawHouse(pos.x, pos.y, houseW, houseH);
-            DrawText(name.c_str(), static_cast<int>(pos.x), static_cast<int>(pos.y + houseH + 8.0f),
-                     20, RAYWHITE);
+        k10s::drawScenery(scenery);
+        for (const auto& [name, yard] : yardPos)
+            k10s::drawYard(yard);
+
+        // Painter's algorithm: draw houses and villagers together, back to front by
+        // their ground y, so villagers can walk behind houses.
+        struct Drawable {
+            float y;
+            bool isHouse;
+            std::size_t idx;
+        };
+        std::vector<Drawable> scene;
+        scene.reserve(houses.size() + villagers.size());
+        for (std::size_t h = 0; h < houses.size(); ++h)
+            scene.push_back({houses[h].base.y, true, h});
+        for (std::size_t v = 0; v < villagers.size(); ++v)
+            scene.push_back({villagers.pos[v].y, false, v});
+        std::sort(scene.begin(), scene.end(),
+                  [](const Drawable& a, const Drawable& b) { return a.y < b.y; });
+
+        for (const auto& d : scene) {
+            if (d.isHouse) {
+                const auto& h = houses[d.idx];
+                k10s::drawHouse(h.base, h.style, h.ready, now);
+                // Name sign on the gable, so the crowd in the yard never covers it.
+                const float roofH = h.style.width * h.style.roofPitch;
+                drawLabel(h.name, {h.base.x, h.base.y - h.style.height - roofH * 0.38f});
+            } else {
+                k10s::drawPerson(villagers.pos[d.idx], villagers.vel[d.idx], villagers.look[d.idx],
+                                 villagers.onFire[d.idx] != 0, now);
+            }
         }
 
-        // Draw villagers back-to-front (by y) so nearer ones overlap farther ones.
-        std::vector<std::size_t> order(villagers.size());
-        std::iota(order.begin(), order.end(), std::size_t{0});
-        std::sort(order.begin(), order.end(),
-                  [&](std::size_t a, std::size_t b) { return villagers.pos[a].y < villagers.pos[b].y; });
+        drawHud(state.nodeCount(), villagers.size(),
+                std::count(villagers.onFire.begin(), villagers.onFire.end(), 1));
 
-        const float now = static_cast<float>(GetTime());
-        for (std::size_t idx : order) {
-            k10s::drawPerson(villagers.pos[idx], villagers.look[idx], villagers.onFire[idx] != 0, now);
+        if (screenshotPath && ++frame == 180) {
+            rlDrawRenderBatchActive(); // flush pending draws before reading pixels
+            Image img = LoadImageFromScreen();
+            ExportImage(img, screenshotPath);
+            UnloadImage(img);
+            break;
         }
-
-        DrawText(TextFormat("pods: %zu   on fire: %d", villagers.size(),
-                            static_cast<int>(std::count(villagers.onFire.begin(),
-                                                        villagers.onFire.end(), 1))),
-                 10, 10, 20, RAYWHITE);
 
         EndDrawing();
     }
