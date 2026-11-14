@@ -17,6 +17,10 @@ set(K10S_VERSION "${PROJECT_VERSION}" CACHE STRING "Version string reported by -
 # ---------------------------------------------------------------------------
 include(FetchContent)
 
+# CMake 4 rejects projects declaring cmake_minimum_required < 3.5, which some
+# dependencies still do (yaml-cpp 0.8.0). Older CMake ignores this variable.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_GAMES    OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(raylib
