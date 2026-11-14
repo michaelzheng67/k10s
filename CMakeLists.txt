@@ -36,6 +36,15 @@ FetchContent_Declare(yaml-cpp
   SYSTEM)
 FetchContent_MakeAvailable(yaml-cpp)
 
+FetchContent_Declare(nlohmann_json
+  URL      https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+  URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+  SYSTEM)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# System libcurl (macOS SDK ships 8.x with a LibreSSL backend).
+find_package(CURL REQUIRED)
+
 # ---------------------------------------------------------------------------
 # Project-wide settings applied per target (never globally, so third-party
 # code isn't compiled with our strict flags)
@@ -61,7 +70,9 @@ add_library(k10s_core STATIC
   src/model/cluster_state.cpp
   src/sim/fake_cluster.cpp
   src/source/fake_source.cpp
+  src/source/kube_source.cpp
   src/kube/kubeconfig.cpp
+  src/kube/http.cpp
   src/ui/command_ui.cpp
   src/render/person.cpp
   src/render/appearance.cpp
@@ -70,7 +81,7 @@ add_library(k10s_core STATIC
   src/render/house.cpp
   src/render/scenery.cpp)
 target_include_directories(k10s_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(k10s_core PUBLIC raylib yaml-cpp::yaml-cpp)
+target_link_libraries(k10s_core PUBLIC raylib yaml-cpp::yaml-cpp nlohmann_json::nlohmann_json CURL::libcurl)
 k10s_configure_target(k10s_core)
 
 # ---------------------------------------------------------------------------
@@ -101,7 +112,8 @@ if(K10S_BUILD_TESTS)
     tests/spsc_queue_test.cpp
     tests/spsc_stress_test.cpp
     tests/kubeconfig_test.cpp
-    tests/session_test.cpp)
+    tests/session_test.cpp
+    tests/kube_parse_test.cpp)
   target_link_libraries(k10s_tests PRIVATE k10s_core Catch2::Catch2WithMain)
   k10s_configure_target(k10s_tests)
 
