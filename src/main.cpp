@@ -1,10 +1,16 @@
 #include "model/cluster_state.hpp"
 #include "render/person.hpp"
 #include "sim/fake_cluster.hpp"
+#include "world/movement.hpp"
+#include "world/villagers.hpp"
 #include <raylib.h>
+#include <algorithm>
+#include <numeric>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 constexpr int kWidth{1280};
 constexpr int kHeight{720};
@@ -49,57 +55,73 @@ int main() {
     for (const auto& e : sim.snapshot())
         state.apply(e);
 
+    k10s::Villagers villagers;
+    std::mt19937 moveRng{1234};
+    bool stateChanged = true;
     double lastTick = GetTime();
 
+    // Layout constants.
+    constexpr int cols = 3;
+    constexpr float marginX = 140.0f, marginY = 180.0f;
+    constexpr float spacingX = 400.0f, spacingY = 320.0f;
+    constexpr float houseW = 200.0f, houseH = 140.0f;
+    constexpr float yardDepth = 70.0f; // how far in front of the house villagers hang out
+    constexpr Rectangle bounds{10.0f, 40.0f, kWidth - 20.0f, kHeight - 50.0f};
+
     while (!WindowShouldClose()) {
+        // --- update ---------------------------------------------------------
         if (GetTime() - lastTick >= 1.0) {
             for (const auto& e : sim.tick())
                 state.apply(e);
             lastTick = GetTime();
+            stateChanged = true;
         }
 
-        BeginDrawing();
-        ClearBackground(grass);
-
         // Lay nodes out on a grid: index -> (row, col) -> screen position.
-        constexpr int cols = 3;
-        constexpr float marginX = 140.0f, marginY = 180.0f;
-        constexpr float spacingX = 400.0f, spacingY = 320.0f;
-        constexpr float houseW = 200.0f, houseH = 140.0f;
-
-        std::unordered_map<std::string, Vector2> housePos;
-
+        std::unordered_map<std::string, Vector2> housePos; // top-left of each house
+        std::unordered_map<std::string, Vector2> yardPos;  // where its villagers live
         int i = 0;
         for (const auto& [uid, node] : state.nodes()) {
             const float x = marginX + static_cast<float>(i % cols) * spacingX;
             const float y = marginY + static_cast<float>(i / cols) * spacingY;
             housePos[node.name] = {x, y};
-            drawHouse(x, y, houseW, houseH);
-            DrawText(node.name.c_str(), static_cast<int>(x), static_cast<int>(y + houseH + 8.0f),
-                     20, RAYWHITE);
+            yardPos[node.name] = {x + houseW / 2.0f, y + houseH + yardDepth};
             ++i;
         }
 
-        // Villagers: one per pod, standing in front of their node's house.
-        constexpr int perRow = 8;
-        constexpr float villagerGap = 24.0f, rowGap = 40.0f;
-        const float now = static_cast<float>(GetTime());
-
-        std::unordered_map<std::string, int> placed;
-        for (const auto& [uid, pod] : state.pods()) {
-            auto it = housePos.find(pod.nodeName);
-            if (it == housePos.end())
-                continue;
-
-            const Vector2 house = it->second;
-            const int k = placed[pod.nodeName]++;
-            const Vector2 feet{
-                house.x + 12.0f + static_cast<float>(k % perRow) * villagerGap,
-                house.y + houseH + 70.0f + static_cast<float>(k / perRow) * rowGap,
-            };
-            const k10s::Appearance look = k10s::appearanceFor(uid);
-            drawPerson(feet, look, !isHealthy(pod), now);
+        if (stateChanged) {
+            villagers.sync(state, yardPos);
+            stateChanged = false;
         }
+
+        const float dt = std::min(GetFrameTime(), 0.05f); // avoid huge jumps after a stall
+        k10s::updateVillagers(villagers, dt, moveRng, bounds);
+
+        // --- draw -----------------------------------------------------------
+        BeginDrawing();
+        ClearBackground(grass);
+
+        for (const auto& [name, pos] : housePos) {
+            drawHouse(pos.x, pos.y, houseW, houseH);
+            DrawText(name.c_str(), static_cast<int>(pos.x), static_cast<int>(pos.y + houseH + 8.0f),
+                     20, RAYWHITE);
+        }
+
+        // Draw villagers back-to-front (by y) so nearer ones overlap farther ones.
+        std::vector<std::size_t> order(villagers.size());
+        std::iota(order.begin(), order.end(), std::size_t{0});
+        std::sort(order.begin(), order.end(),
+                  [&](std::size_t a, std::size_t b) { return villagers.pos[a].y < villagers.pos[b].y; });
+
+        const float now = static_cast<float>(GetTime());
+        for (std::size_t idx : order) {
+            k10s::drawPerson(villagers.pos[idx], villagers.look[idx], villagers.onFire[idx] != 0, now);
+        }
+
+        DrawText(TextFormat("pods: %zu   on fire: %d", villagers.size(),
+                            static_cast<int>(std::count(villagers.onFire.begin(),
+                                                        villagers.onFire.end(), 1))),
+                 10, 10, 20, RAYWHITE);
 
         EndDrawing();
     }
