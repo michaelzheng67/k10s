@@ -1,12 +1,16 @@
+#include "kube/kubeconfig.hpp"
 #include "model/cluster_state.hpp"
 #include "render/house.hpp"
 #include "render/person.hpp"
 #include "render/scenery.hpp"
-#include "sim/fake_cluster.hpp"
-#include "util/spsc_queue.hpp"
+#include "source/fake_source.hpp"
+#include "source/session.hpp"
+#include "ui/command_ui.hpp"
 #include "world/movement.hpp"
 #include "world/villagers.hpp"
 #include <algorithm>
+#include <array>
+#include <memory>
 #include <chrono>
 #include <cstdlib>
 #include <random>
@@ -50,10 +54,10 @@ struct PlacedHouse {
     bool ready;
 };
 
-void drawHud(std::size_t nodes, std::size_t pods, long burning) {
+void drawHud(const std::string& context, std::size_t nodes, std::size_t pods, long burning) {
     DrawRectangle(0, 0, kWidth, 34, Color{20, 25, 30, 210});
     DrawText("k10s", 12, 7, 20, RAYWHITE);
-    DrawText("context: fake-cluster", 80, 9, 18, Color{170, 180, 190, 255});
+    DrawText(TextFormat("context: %s", context.c_str()), 80, 9, 18, Color{170, 180, 190, 255});
     const char* stats = TextFormat("nodes %zu   pods %zu", nodes, pods);
     const char* fire = TextFormat("on fire %ld", burning);
     const int fireW = MeasureText(fire, 18);
@@ -75,28 +79,44 @@ void drawLabel(const std::string& text, Vector2 centre) {
     DrawText(text.c_str(), x, y, fontSize, RAYWHITE);
 }
 
+// Built-in simulated clusters, so k10s works (and demos) with no real cluster.
+struct FakeContext {
+    const char* name;
+    std::uint64_t seed;
+    int nodes;
+    int podsPerNode;
+};
+constexpr std::array<FakeContext, 2> kFakeContexts{{
+    {"fake-village", 42, 6, 8},
+    {"fake-hamlet", 7, 3, 5},
+}};
+
+// Returns the data source for a context, or nullptr if we can't connect to it yet.
+std::unique_ptr<k10s::DataSource> makeSource(const std::string& context) {
+    for (const auto& f : kFakeContexts)
+        if (context == f.name)
+            return std::make_unique<k10s::FakeSource>(f.seed, f.nodes, f.podsPerNode);
+    return nullptr; // real clusters: KubeSource arrives in M5
+}
+
 } // namespace
 
 int main() {
     Window w{kWidth, kHeight, kTitle};
-    k10s::FakeCluster sim{42, 6, 8};
-    k10s::ClusterState state;
-    k10s::SpscQueue<k10s::Event, 4096> events;
-    for (const auto& e : sim.snapshot())
-        events.try_push(e);
+    SetExitKey(KEY_NULL); // Esc closes menus (like k9s) instead of quitting; use :q
 
-    std::jthread sim_thread([&sim, &events](std::stop_token st) {
-        while (!st.stop_requested()) {
-            for (const auto& e : sim.tick()) {
-                while (!events.try_push(e) && !st.stop_requested()) {
-                    std::this_thread::yield();
-                }
-            }
-            for (int i = 0; i < 10 && !st.stop_requested(); ++i) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-        }
-    });
+    // Context list: built-in fakes first, then everything in your kubeconfig.
+    const k10s::Kubeconfig kubeconfig = k10s::loadKubeconfig();
+    std::vector<std::string> contexts;
+    for (const auto& f : kFakeContexts)
+        contexts.emplace_back(f.name);
+    for (const auto& c : kubeconfig.contexts)
+        contexts.push_back(c.name);
+
+    std::string currentContext = kFakeContexts[0].name;
+    auto session = std::make_unique<k10s::Session>(makeSource(currentContext));
+    k10s::CommandUi ui;
+    k10s::ClusterState state;
 
     k10s::Villagers villagers;
     std::mt19937 moveRng{1234};
@@ -116,7 +136,25 @@ int main() {
     int frame = 0;
 
     while (!WindowShouldClose()) {
-        while (auto e = events.try_pop()) {
+        // --- input ----------------------------------------------------------
+        const auto action = ui.update(contexts, currentContext, GetFrameTime());
+        if (action.kind == k10s::CommandUi::ActionKind::Quit)
+            break;
+        if (action.kind == k10s::CommandUi::ActionKind::SwitchContext) {
+            if (auto source = makeSource(action.arg)) {
+                session.reset(); // stop + join the old thread before starting a new one
+                state = k10s::ClusterState{};
+                villagers = k10s::Villagers{};
+                session = std::make_unique<k10s::Session>(std::move(source));
+                currentContext = action.arg;
+                stateChanged = true;
+            } else {
+                ui.flash("can't connect to real clusters yet (M5): " + action.arg);
+            }
+        }
+
+        // --- update ---------------------------------------------------------
+        while (auto e = session->events().try_pop()) {
             state.apply(*e);
             stateChanged = true;
         }
@@ -179,8 +217,10 @@ int main() {
             }
         }
 
-        drawHud(state.nodeCount(), villagers.size(),
+        drawHud(currentContext, state.nodeCount(), villagers.size(),
                 std::count(villagers.onFire.begin(), villagers.onFire.end(), 1));
+
+        ui.draw(contexts, currentContext, kWidth, kHeight);
 
         if (screenshotPath && ++frame == 180) {
             rlDrawRenderBatchActive(); // flush pending draws before reading pixels

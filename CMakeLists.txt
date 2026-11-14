@@ -25,6 +25,17 @@ FetchContent_Declare(raylib
   SYSTEM)
 FetchContent_MakeAvailable(raylib)
 
+set(YAML_CPP_BUILD_TESTS   OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS   OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_FORMAT_SOURCE OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(yaml-cpp
+  GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+  GIT_TAG        0.8.0
+  GIT_SHALLOW    TRUE
+  SYSTEM)
+FetchContent_MakeAvailable(yaml-cpp)
+
 # ---------------------------------------------------------------------------
 # Project-wide settings applied per target (never globally, so third-party
 # code isn't compiled with our strict flags)
@@ -49,6 +60,9 @@ endfunction()
 add_library(k10s_core STATIC
   src/model/cluster_state.cpp
   src/sim/fake_cluster.cpp
+  src/source/fake_source.cpp
+  src/kube/kubeconfig.cpp
+  src/ui/command_ui.cpp
   src/render/person.cpp
   src/render/appearance.cpp
   src/world/villagers.cpp
@@ -56,7 +70,7 @@ add_library(k10s_core STATIC
   src/render/house.cpp
   src/render/scenery.cpp)
 target_include_directories(k10s_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(k10s_core PUBLIC raylib)
+target_link_libraries(k10s_core PUBLIC raylib yaml-cpp::yaml-cpp)
 k10s_configure_target(k10s_core)
 
 # ---------------------------------------------------------------------------
@@ -85,7 +99,9 @@ if(K10S_BUILD_TESTS)
     tests/appearance_test.cpp
     tests/villagers_test.cpp
     tests/spsc_queue_test.cpp
-    tests/spsc_stress_test.cpp)
+    tests/spsc_stress_test.cpp
+    tests/kubeconfig_test.cpp
+    tests/session_test.cpp)
   target_link_libraries(k10s_tests PRIVATE k10s_core Catch2::Catch2WithMain)
   k10s_configure_target(k10s_tests)
 
