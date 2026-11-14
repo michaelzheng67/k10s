@@ -39,12 +39,13 @@ function(k10s_configure_target target)
 endfunction()
 
 # ---------------------------------------------------------------------------
-# k10s_core: everything that isn't main(). Header-only (INTERFACE) for now;
-# becomes a STATIC library once M1 adds .cpp files.
+# k10s_core: everything that isn't main().
 # ---------------------------------------------------------------------------
-add_library(k10s_core INTERFACE)
-target_include_directories(k10s_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(k10s_core INTERFACE raylib)
+add_library(k10s_core STATIC
+  src/model/cluster_state.cpp)
+target_include_directories(k10s_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(k10s_core PUBLIC raylib)
+k10s_configure_target(k10s_core)
 
 # ---------------------------------------------------------------------------
 # The app
@@ -65,7 +66,9 @@ if(K10S_BUILD_TESTS)
   FetchContent_MakeAvailable(Catch2)
 
   enable_testing()
-  add_executable(k10s_tests tests/smoke_test.cpp)
+  add_executable(k10s_tests
+    tests/smoke_test.cpp
+    tests/cluster_state_test.cpp)
   target_link_libraries(k10s_tests PRIVATE k10s_core Catch2::Catch2WithMain)
   k10s_configure_target(k10s_tests)
 
