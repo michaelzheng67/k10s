@@ -15,16 +15,28 @@ jobs:
     env:
       TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build tools
         run: brew install ninja
 
+      # The default Xcode can ship an older libc++ where std::jthread/stop_token are
+      # still experimental; use the newest one installed on the runner.
+      - name: Select newest Xcode
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)"
+          echo "Using ${XCODE}"
+          sudo xcode-select -s "${XCODE}"
+          clang++ --version
+          xcrun --show-sdk-version
+
       - name: Build (universal, macOS 13+)
         run: |
+          set -o pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          cmake --preset dist -DK10S_VERSION="${VERSION}"
-          cmake --build --preset dist
+          report() { grep -E "error|Error" "$1" | head -20 | sed 's/^/::error::/'; exit 1; }
+          cmake --preset dist -DK10S_VERSION="${VERSION}" 2>&1 | tee configure.log || report configure.log
+          cmake --build --preset dist 2>&1 | tee build.log || report build.log
 
       - name: Check the binary
         run: |
