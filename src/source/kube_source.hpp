@@ -25,8 +25,14 @@ class KubeSource : public DataSource {
 
   private:
     KubeHttp http_;
-    std::unordered_set<std::string> knownPods_;  // uids we've sent to the renderer
-    std::unordered_set<std::string> knownNodes_;
+    std::unordered_set<std::string> knownNodes_; // uids we've sent to the renderer
+    std::unordered_set<std::string> knownPods_;
+
+    // Snapshot nodes + pods, diff against what we've sent, return the pods' resourceVersion
+    // ("" on failure).
+    std::string relist(const std::stop_token& st, EventQueue& out);
+    // Stream pod changes after `rv` (updating it). Returns false when a relist is needed.
+    bool watch(std::string& rv, const std::stop_token& st, EventQueue& out);
 };
 
 } // namespace k10s

@@ -4,6 +4,7 @@
 #include "render/person.hpp"
 #include "render/scenery.hpp"
 #include "source/fake_source.hpp"
+#include "source/kube_source.hpp"
 #include "source/session.hpp"
 #include "ui/command_ui.hpp"
 #include "world/movement.hpp"
@@ -12,7 +13,9 @@
 #include <array>
 #include <memory>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
+#include <string_view>
 #include <random>
 #include <raylib.h>
 #include <rlgl.h>
@@ -91,17 +94,32 @@ constexpr std::array<FakeContext, 2> kFakeContexts{{
     {"fake-hamlet", 7, 3, 5},
 }};
 
-// Returns the data source for a context, or nullptr if we can't connect to it yet.
-std::unique_ptr<k10s::DataSource> makeSource(const std::string& context) {
+// Returns the data source for a context, or nullptr if it's unknown.
+std::unique_ptr<k10s::DataSource> makeSource(const std::string& context,
+                                             const k10s::Kubeconfig& kubeconfig) {
     for (const auto& f : kFakeContexts)
         if (context == f.name)
             return std::make_unique<k10s::FakeSource>(f.seed, f.nodes, f.podsPerNode);
-    return nullptr; // real clusters: KubeSource arrives in M5
+    if (const auto* ctx = kubeconfig.find(context))
+        return std::make_unique<k10s::KubeSource>(*ctx);
+    return nullptr;
+}
+
+// k10s [--context NAME]   (like k9s; defaults to the kubeconfig's current-context)
+std::string pickStartContext(int argc, char** argv, const k10s::Kubeconfig& kubeconfig) {
+    for (int i = 1; i + 1 < argc; ++i)
+        if (std::string_view{argv[i]} == "--context")
+            return argv[i + 1];
+    if (const char* env = std::getenv("K10S_CONTEXT"))
+        return env;
+    if (kubeconfig.find(kubeconfig.currentContext))
+        return kubeconfig.currentContext;
+    return kFakeContexts[0].name;
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     Window w{kWidth, kHeight, kTitle};
     SetExitKey(KEY_NULL); // Esc closes menus (like k9s) instead of quitting; use :q
 
@@ -113,8 +131,15 @@ int main() {
     for (const auto& c : kubeconfig.contexts)
         contexts.push_back(c.name);
 
-    std::string currentContext = kFakeContexts[0].name;
-    auto session = std::make_unique<k10s::Session>(makeSource(currentContext));
+    std::string currentContext = pickStartContext(argc, argv, kubeconfig);
+    auto startSource = makeSource(currentContext, kubeconfig);
+    if (!startSource) {
+        std::fprintf(stderr, "k10s: unknown context '%s', using %s\n", currentContext.c_str(),
+                     kFakeContexts[0].name);
+        currentContext = kFakeContexts[0].name;
+        startSource = makeSource(currentContext, kubeconfig);
+    }
+    auto session = std::make_unique<k10s::Session>(std::move(startSource));
     k10s::CommandUi ui;
     k10s::ClusterState state;
 
@@ -141,7 +166,7 @@ int main() {
         if (action.kind == k10s::CommandUi::ActionKind::Quit)
             break;
         if (action.kind == k10s::CommandUi::ActionKind::SwitchContext) {
-            if (auto source = makeSource(action.arg)) {
+            if (auto source = makeSource(action.arg, kubeconfig)) {
                 session.reset(); // stop + join the old thread before starting a new one
                 state = k10s::ClusterState{};
                 villagers = k10s::Villagers{};
@@ -149,7 +174,7 @@ int main() {
                 currentContext = action.arg;
                 stateChanged = true;
             } else {
-                ui.flash("can't connect to real clusters yet (M5): " + action.arg);
+                ui.flash("unknown context: " + action.arg);
             }
         }
 
