@@ -132,14 +132,18 @@ std::string pickStartTheme(int argc, char** argv, const k10s::UserConfig& cfg) {
 }
 
 int main(int argc, char** argv) {
+    // raylib logs every init step at INFO; only show warnings/errors unless --verbose.
+    SetTraceLogLevel(LOG_WARNING);
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg{argv[i]};
+        if (arg == "--verbose")
+            SetTraceLogLevel(LOG_INFO);
         if (arg == "--version" || arg == "-v") {
             std::printf("k10s %s\n", K10S_VERSION);
             return 0;
         }
         if (arg == "--help" || arg == "-h") {
-            std::printf("usage: k10s [--context NAME] [--theme village|city|beach]\n"
+            std::printf("usage: k10s [--context NAME] [--theme village|city|beach] [--verbose]\n"
                         "in-app: drag/scroll to pan/zoom, f to fit, :ctx, :theme, :q\n");
             return 0;
         }
