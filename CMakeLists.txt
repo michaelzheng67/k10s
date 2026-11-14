@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # for clangd / IDE tooling
 
 option(K10S_SANITIZE    "Enable ASan + UBSan"  OFF)
+option(K10S_TSAN        "Enable ThreadSanitizer (not combinable with ASan)" OFF)
 option(K10S_BUILD_TESTS "Build unit tests"     ON)
 
 # ---------------------------------------------------------------------------
@@ -35,6 +36,10 @@ function(k10s_configure_target target)
   if(K10S_SANITIZE)
     target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(${target}    PRIVATE -fsanitize=address,undefined)
+  endif()
+  if(K10S_TSAN)
+    target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
+    target_link_options(${target}    PRIVATE -fsanitize=thread)
   endif()
 endfunction()
 
@@ -78,7 +83,9 @@ if(K10S_BUILD_TESTS)
     tests/cluster_state_test.cpp
     tests/fake_cluster_test.cpp
     tests/appearance_test.cpp
-    tests/villagers_test.cpp)
+    tests/villagers_test.cpp
+    tests/spsc_queue_test.cpp
+    tests/spsc_stress_test.cpp)
   target_link_libraries(k10s_tests PRIVATE k10s_core Catch2::Catch2WithMain)
   k10s_configure_target(k10s_tests)
 

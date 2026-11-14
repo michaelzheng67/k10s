@@ -5,20 +5,59 @@
       "name": "debug",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/debug",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "K10S_SANITIZE": "ON" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "K10S_SANITIZE": "ON"
+      }
     },
     {
       "name": "release",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "K10S_SANITIZE": "OFF" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "K10S_SANITIZE": "OFF"
+      }
+    },
+    {
+      "name": "tsan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "K10S_SANITIZE": "OFF",
+        "K10S_TSAN": "ON"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "debug",   "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" }
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } }
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }
