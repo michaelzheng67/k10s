@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # for clangd / IDE tooling
 option(K10S_SANITIZE    "Enable ASan + UBSan"  OFF)
 option(K10S_TSAN        "Enable ThreadSanitizer (not combinable with ASan)" OFF)
 option(K10S_BUILD_TESTS "Build unit tests"     ON)
+set(K10S_VERSION "${PROJECT_VERSION}" CACHE STRING "Version string reported by --version")
 
 # ---------------------------------------------------------------------------
 # Dependencies (pinned tags -> reproducible builds; SYSTEM -> no warnings
@@ -96,6 +97,7 @@ k10s_configure_target(k10s_core)
 # ---------------------------------------------------------------------------
 add_executable(k10s src/main.cpp)
 target_link_libraries(k10s PRIVATE k10s_core)
+target_compile_definitions(k10s PRIVATE K10S_VERSION="${K10S_VERSION}")
 k10s_configure_target(k10s)
 
 # ---------------------------------------------------------------------------

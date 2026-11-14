@@ -132,6 +132,19 @@ std::string pickStartTheme(int argc, char** argv, const k10s::UserConfig& cfg) {
 }
 
 int main(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg{argv[i]};
+        if (arg == "--version" || arg == "-v") {
+            std::printf("k10s %s\n", K10S_VERSION);
+            return 0;
+        }
+        if (arg == "--help" || arg == "-h") {
+            std::printf("usage: k10s [--context NAME] [--theme village|city|beach]\n"
+                        "in-app: drag/scroll to pan/zoom, f to fit, :ctx, :theme, :q\n");
+            return 0;
+        }
+    }
+
     Window w{kWidth, kHeight, kTitle};
     SetExitKey(KEY_NULL); // Esc closes menus (like k9s) instead of quitting; use :q
 

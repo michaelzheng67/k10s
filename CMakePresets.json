@@ -28,6 +28,24 @@
         "K10S_SANITIZE": "OFF",
         "K10S_TSAN": "ON"
       }
+    },
+    {
+      "name": "dist",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/dist",
+      "environment": {
+        "LDFLAGS": "",
+        "CPPFLAGS": "",
+        "CFLAGS": "",
+        "CXXFLAGS": ""
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
+        "K10S_BUILD_TESTS": "OFF",
+        "K10S_SANITIZE": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -42,6 +60,13 @@
     {
       "name": "tsan",
       "configurePreset": "tsan"
+    },
+    {
+      "name": "dist",
+      "configurePreset": "dist",
+      "targets": [
+        "k10s"
+      ]
     }
   ],
   "testPresets": [

@@ -6,7 +6,12 @@ A Kubernetes cluster viewer that draws each cluster as a village: nodes are hous
 
 ## Setup
 
-Requires CMake 3.25+, Ninja, and a C++20 compiler. Dependencies are fetched automatically.
+```sh
+brew install michaelzheng67/tap/k10s
+k10s
+```
+
+Or build from source. This requires CMake 3.25+, Ninja, and a C++20 compiler; dependencies are fetched automatically.
 
 ```sh
 cmake --preset release && cmake --build --preset release
@@ -14,7 +19,7 @@ cmake --preset release && cmake --build --preset release
 ./build/release/k10s --context fake-village # built-in demo cluster, no Kubernetes needed
 ```
 
-Controls: drag to pan, scroll to zoom, `f` to fit. Commands: `:ctx` switches context, `:theme` switches theme, and `:q` quits.
+Run `k10s --help` for options. Controls: drag to pan, scroll to zoom, `f` to fit. Commands: `:ctx` switches context, `:theme` switches theme, and `:q` quits.
 
 ## Under the hood
 
