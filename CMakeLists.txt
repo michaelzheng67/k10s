@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(k10s VERSION 0.1.2 LANGUAGES C CXX)
+project(k10s VERSION 0.1.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,12 @@ option(K10S_SANITIZE    "Enable ASan + UBSan"  OFF)
 option(K10S_TSAN        "Enable ThreadSanitizer (not combinable with ASan)" OFF)
 option(K10S_BUILD_TESTS "Build unit tests"     ON)
 set(K10S_VERSION "${PROJECT_VERSION}" CACHE STRING "Version string reported by --version")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(_k10s_demo_default ON)
+else()
+  set(_k10s_demo_default OFF)
+endif()
+option(K10S_DEMO_CONTEXTS "Include built-in fake clusters (fake-village, ...)" ${_k10s_demo_default})
 
 # ---------------------------------------------------------------------------
 # Dependencies (pinned tags -> reproducible builds; SYSTEM -> no warnings
@@ -102,6 +108,9 @@ k10s_configure_target(k10s_core)
 add_executable(k10s src/main.cpp)
 target_link_libraries(k10s PRIVATE k10s_core)
 target_compile_definitions(k10s PRIVATE K10S_VERSION="${K10S_VERSION}")
+if(K10S_DEMO_CONTEXTS)
+  target_compile_definitions(k10s PRIVATE K10S_DEMO_CONTEXTS)
+endif()
 k10s_configure_target(k10s)
 
 # ---------------------------------------------------------------------------

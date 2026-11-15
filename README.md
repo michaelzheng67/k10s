@@ -16,8 +16,9 @@ Or build from source. This requires CMake 3.25+, Ninja, and a C++20 compiler; de
 ```sh
 cmake --preset release && cmake --build --preset release
 ./build/release/k10s                        # uses your current kubeconfig context
-./build/release/k10s --context fake-village # built-in demo cluster, no Kubernetes needed
 ```
+
+Debug builds (`cmake --preset debug`) also include demo clusters (`fake-village`, `fake-town`) that need no Kubernetes.
 
 Run `k10s --help` for options. Controls: drag to pan, scroll to zoom, `f` to fit. Commands: `:ctx` switches context, `:theme` switches theme, and `:q` quits.
 

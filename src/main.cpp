@@ -72,18 +72,39 @@ bool contains(Rectangle outer, Rectangle inner) {
            inner.y + inner.height <= outer.y + outer.height;
 }
 
-// Built-in simulated clusters, so k10s works (and demos) with no real cluster.
+// Built-in simulated clusters for development and screenshots. Only compiled into builds
+// with K10S_DEMO_CONTEXTS (on by default for Debug); release builds show real clusters only.
 struct FakeContext {
     const char* name;
     std::uint64_t seed;
     int nodes;
     int podsPerNode;
 };
+#ifdef K10S_DEMO_CONTEXTS
 constexpr std::array<FakeContext, 3> kFakeContexts{{
     {"fake-village", 42, 6, 8},
     {"fake-hamlet", 7, 3, 5},
     {"fake-town", 99, 14, 6},
 }};
+#else
+constexpr std::array<FakeContext, 0> kFakeContexts{};
+#endif
+
+// Where to go when no real context is usable: a demo cluster if built in, else nothing.
+std::string fallbackContext() { return kFakeContexts.empty() ? std::string{} : kFakeContexts.front().name; }
+std::string fallbackNote() {
+    return kFakeContexts.empty() ? "run `k10s --contexts` to see what k10s found" : "showing a demo cluster";
+}
+
+// Used when there's nothing to connect to: the village stays empty, the app stays usable
+// (you can still :ctx to a context once one exists).
+class EmptySource final : public k10s::DataSource {
+  public:
+    void run(std::stop_token st, k10s::EventQueue&) override {
+        while (!st.stop_requested())
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+};
 
 // Returns the data source for a context, or nullptr if it's unknown.
 std::unique_ptr<k10s::DataSource> makeSource(const std::string& context,
@@ -118,9 +139,9 @@ StartChoice pickStartContext(int argc, char** argv, const k10s::Kubeconfig& kube
                                    : "current-context '" + cur + "' not found; using " + first};
     }
     if (!kubeconfig.warnings.empty())
-        return {kFakeContexts[0].name, "couldn't load kubeconfig (" + kubeconfig.warnings.front() +
-                                           "); showing a demo cluster"};
-    return {kFakeContexts[0].name, "no contexts in kubeconfig; showing a demo cluster"};
+        return {fallbackContext(),
+                "couldn't load kubeconfig (" + kubeconfig.warnings.front() + "); " + fallbackNote()};
+    return {fallbackContext(), "no contexts in kubeconfig; " + fallbackNote()};
 }
 
 // `k10s --contexts`: what k10s sees in your kubeconfig, for troubleshooting.
@@ -189,10 +210,14 @@ int main(int argc, char** argv) {
 
     auto [currentContext, startNote] = pickStartContext(argc, argv, kubeconfig);
     auto startSource = makeSource(currentContext, kubeconfig);
-    if (!startSource) {
-        startNote = "unknown context '" + currentContext + "'; showing a demo cluster";
-        currentContext = kFakeContexts[0].name;
+    if (!startSource && !currentContext.empty()) {
+        startNote = "unknown context '" + currentContext + "'; " + fallbackNote();
+        currentContext = fallbackContext();
         startSource = makeSource(currentContext, kubeconfig);
+    }
+    if (!startSource) { // nothing to connect to: empty village, message explains why
+        currentContext = "(none)";
+        startSource = std::make_unique<EmptySource>();
     }
     auto session = std::make_unique<k10s::Session>(std::move(startSource));
     k10s::CommandUi ui;
